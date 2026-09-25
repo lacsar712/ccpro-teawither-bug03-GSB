@@ -23,19 +23,15 @@ def _wants_htmx(request):
 
 @login_required
 def home(request):
+    # 三张状态卡与列表筛选共用同一统计函数、同一状态字面量
+    counts = status_ops.status_counts()
     context = {
         "garden_count": Garden.objects.count(),
         "trough_count": Trough.objects.count(),
         "batch_count": WitherBatch.objects.count(),
-        "ready_count": Trough.objects.filter(
-            status=status_ops.home_status("ready")
-        ).count(),
-        "withering_count": Trough.objects.filter(
-            status=status_ops.home_status("withering")
-        ).count(),
-        "loading_count": Trough.objects.filter(
-            status=status_ops.home_status("loading")
-        ).count(),
+        "ready_count": counts[status_ops.STATUS_READY],
+        "withering_count": counts[status_ops.STATUS_WITHERING],
+        "loading_count": counts[status_ops.STATUS_LOADING],
     }
     return render(request, "home.html", context)
 
@@ -104,27 +100,19 @@ class TroughListView(LoginRequiredMixin, ListView):
     context_object_name = "troughs"
 
     def get_queryset(self):
+        # 整页渲染与 HTMX 局部刷新共用这一条过滤路径
         qs = Trough.objects.select_related("garden").all()
-        status = self.request.GET.get("status")
-        if status:
-            # BUG: 整页筛走 LIST_MAP
-            qs = qs.filter(status=status_ops.list_status(status))
-        return qs
+        return status_ops.filter_by_status(qs, self.request.GET.get("status"))
 
     def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
         if _wants_htmx(request):
-            qs = Trough.objects.select_related("garden").all()
-            status = request.GET.get("status")
-            if status:
-                # BUG: HTMX 走另一套映射
-                qs = qs.filter(status=status_ops.htmx_status(status))
             html = render_to_string(
                 "troughs/_table.html",
-                {"troughs": qs},
+                {"troughs": self.object_list},
                 request=request,
             )
             return HttpResponse(html)
-        self.object_list = self.get_queryset()
         return super().get(request, *args, **kwargs)
 
 
